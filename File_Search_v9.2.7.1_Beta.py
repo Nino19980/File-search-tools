@@ -592,6 +592,14 @@ class FileSearchApp:
         """Processa un singolo file per verificare corrispondenze"""
         if self.stop_search:
             return None
+        
+        # NUOVA LOGICA: Verifica se il file è già stato processato
+        # Normalizza il percorso per essere sicuri
+        normalized_path = os.path.normpath(os.path.abspath(file_path))
+        if normalized_path in self.processed_files:
+            self.log_debug(f"File già processato, saltato: {normalized_path}")
+            return None
+        
         try:
             # Verifica nome file
             file_name = os.path.basename(file_path)
@@ -655,6 +663,9 @@ class FileSearchApp:
                             break
             
             if matched:
+                # NUOVA LOGICA: Aggiungi il file all'elenco dei processati
+                self.processed_files.add(normalized_path)
+                
                 # Verifica se il match è in un allegato di un file EMAIL (EML o MSG)
                 _, ext = os.path.splitext(file_path)
                 if ext.lower() in ['.eml', '.msg'] and search_content and isinstance(content, str) and "--- ALLEGATO" in content:
@@ -670,7 +681,10 @@ class FileSearchApp:
                 
                 # Match normale (non in allegato o non in file EMAIL)
                 return self.create_file_info(file_path)
-                
+                    
+            # NUOVA LOGICA: Se non è stato trovato match, aggiungi comunque il file all'elenco dei processati
+            self.processed_files.add(normalized_path)
+                    
         except Exception as e:
             self.log_error(f"Errore nel processare il file {file_path}", exception=e)
             if self.debug_mode:
@@ -678,7 +692,7 @@ class FileSearchApp:
                 self.log_error(traceback.format_exc())
                 
         return None
-
+    
     @error_handler
     def process_file_with_timeout(self, file_path, keywords, search_content=True):
         """Process a file with timeout to prevent hanging"""
@@ -3967,7 +3981,7 @@ class FileSearchApp:
 
             if self.stop_search:
                 return ""
-            # Microsoft Access (.mdb, .accdb) - NUOVO
+            # Microsoft Access (.mdb, .accdb)
             elif ext in ['.mdb', '.accdb']:
                 try:
                     import pyodbc
@@ -3996,8 +4010,11 @@ class FileSearchApp:
                         content_parts.append(f"Database Access: {os.path.basename(file_path)}")
                         content_parts.append(f"Numero di tabelle: {len(tables)}")
                         
-                        # Estrai struttura e campione di dati da ogni tabella
+                        # Estrai struttura e dati da ogni tabella
                         for table in tables:
+                            if self.stop_search:
+                                return ""
+                                
                             content_parts.append(f"\n--- Tabella: {table} ---")
                             
                             # Ottieni struttura della tabella
@@ -4005,16 +4022,20 @@ class FileSearchApp:
                             col_names = [col.column_name for col in columns]
                             content_parts.append("Colonne: " + ", ".join(col_names))
                             
-                            # Ottieni un campione di dati (massimo 10 righe)
+                            # Ricerca nei dati della tabella - MIGLIORIA PER RICERCA NEI DATI
                             try:
-                                cursor.execute(f"SELECT * FROM [{table}] LIMIT 10")
+                                # Esegui query su tutti i dati della tabella
+                                cursor.execute(f"SELECT * FROM [{table}]")
                                 rows = cursor.fetchall()
                                 if rows:
-                                    content_parts.append(f"Campione dati ({len(rows)} righe):")
+                                    # Aggiungi un campione di righe al contenuto per la ricerca
+                                    content_parts.append(f"Dati ({len(rows)} righe):")
+                                    # Memorizza tutte le righe come stringhe per permettere la ricerca
                                     for row in rows:
-                                        content_parts.append(str(row))
-                            except:
-                                content_parts.append("Errore nell'estrazione del campione dati")
+                                        row_str = " ".join([str(cell) for cell in row if cell is not None])
+                                        content_parts.append(row_str)
+                            except Exception as e:
+                                content_parts.append(f"Errore nell'estrazione dei dati: {str(e)}")
                         
                         conn.close()
                         content = "\n".join(content_parts)
@@ -4031,9 +4052,7 @@ class FileSearchApp:
                     self.log_debug(f"Errore nell'analisi del file Access {file_path}: {str(e)}")
                     return ""
 
-            if self.stop_search:
-                return ""
-            # OpenDocument Database (.odb) - NUOVO
+            # OpenDocument Database (.odb)
             elif ext == '.odb':
                 try:
                     import zipfile
@@ -4061,6 +4080,9 @@ class FileSearchApp:
                                     content_parts.append(f"Numero di tabelle trovate: {len(tables)}")
                                     
                                     for table in tables:
+                                        if self.stop_search:
+                                            return ""
+                                            
                                         if 'db:name' in table.attrib:
                                             table_name = table.get('{urn:oasis:names:tc:opendocument:xmlns:database:1.0}name')
                                             content_parts.append(f"\n--- Tabella: {table_name} ---")
@@ -4074,6 +4096,23 @@ class FileSearchApp:
                                                     col_names.append(col_name)
                                             
                                             content_parts.append("Colonne: " + ", ".join(col_names))
+                                    
+                                    # NUOVO: Cercare di estrarre anche i dati dalle tabelle
+                                    # Controlla se esiste il file di dati tipicamente in format/database/data
+                                    try:
+                                        # In ODB, i dati possono essere in diversi formati/posizioni
+                                        # Questo è solo un esempio, potrebbe richiedere ulteriori adattamenti
+                                        data_files = [f for f in zip_ref.namelist() if f.startswith('database/') and f.endswith('.dbf')]
+                                        if data_files:
+                                            content_parts.append("\n--- Dati estratti ---")
+                                            for data_file in data_files:
+                                                with zip_ref.open(data_file) as df:
+                                                    # Estrai contenuto raw per permettere la ricerca
+                                                    content_parts.append(f"Contenuto del file dati: {data_file}")
+                                                    # Leggi i primi KB del file per permettere la ricerca
+                                                    content_parts.append(df.read(10240).decode('utf-8', errors='ignore'))
+                                    except Exception as e:
+                                        content_parts.append(f"Errore nell'estrazione dei dati: {str(e)}")
                             except Exception as e:
                                 content_parts.append(f"Errore nell'estrazione dello schema: {str(e)}")
                             
@@ -4085,9 +4124,6 @@ class FileSearchApp:
                 except Exception as e:
                     self.log_debug(f"Errore nell'analisi del file ODB {file_path}: {str(e)}")
                     return ""
-
-            if self.stop_search:
-                return ""       
             # Tab-Separated Values (.tsv) - NUOVO
             elif ext == '.tsv':
                 try:
@@ -5838,6 +5874,8 @@ class FileSearchApp:
         self.is_searching = False
         self.stop_search = False
         
+        # Resetta l'elenco dei file processati
+        self.processed_files = set()
         # Elimina flag temporanei di interruzione se presenti
         if hasattr(self, '_stopping_in_progress'):
             delattr(self, '_stopping_in_progress')
@@ -9483,6 +9521,8 @@ class FileSearchApp:
         self.datetime_var = StringVar()
         self.max_depth = 5
         
+        # Tracciamento file già processati (per evitare duplicati)
+        self.processed_files = set()
         # Variabili principali per la ricerca
         self.search_content = BooleanVar(value=True)
         self.search_path = StringVar()
