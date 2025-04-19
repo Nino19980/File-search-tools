@@ -838,7 +838,7 @@ class FileSearchApp:
                     
                     # Log utilizzo memoria (solo ogni 10 chiamate per non sovraccaricare i log)
                     self._memory_log_counter = getattr(self, '_memory_log_counter', 0) + 1
-                    if self._memory_log_counter % 10 == 0:
+                    if self._memory_log_counter % 20 == 0:
                         self.log_debug(f"Gestione memoria automatica: Utilizzo corrente {memory_usage:.2f} MB, soglia {threshold:.2f} MB")
                     
                     # Verifica se superiamo la soglia
@@ -1116,94 +1116,6 @@ class FileSearchApp:
         return True   # Se la ricerca nei contenuti non è attivata, procedi senza avviso   
     
     @error_handler
-    def log_current_settings(self, context="ricerca"):
-        """Funzione centralizzata per registrare le impostazioni correnti nel log."""
-        # Determina l'intestazione in base al contesto
-        if context == "ricerca":
-            header = "===== INIZIO RICERCA CON LE SEGUENTI IMPOSTAZIONI ====="
-            footer = "===== FINE LOGGING IMPOSTAZIONI - INIZIO RICERCA ====="
-        elif context == "modifica_avanzate":
-            header = "===== INIZIO MODIFICA IMPOSTAZIONI AVANZATE ====="
-            footer = "===== FINE MODIFICA IMPOSTAZIONI AVANZATE - SALVATAGGIO COMPLETATO ====="
-        elif context == "estensioni":
-            header = "===== INIZIO CONFIGURAZIONE ESTENSIONI ====="
-            footer = "===== FINE CONFIGURAZIONE ESTENSIONI ====="
-        else:
-            header = f"===== INIZIO LOGGING IMPOSTAZIONI ({context}) ====="
-            footer = f"===== FINE LOGGING IMPOSTAZIONI ({context}) ====="
-        
-        # Registra l'intestazione
-        self.log_debug(header)
-        
-        # Log delle estensioni
-        mode = getattr(self, 'extension_mode', 'base')
-        try:
-            extensions = self.get_extension_settings(mode)
-            self.log_debug(f"Saved {len(extensions)} extensions for {mode} mode")
-            self.log_debug(f"Extensions: {', '.join(extensions)}")
-            self.log_debug(f"Aggiornata UI per modalità {mode}")
-        except Exception as e:
-            self.log_debug(f"Errore nel recupero delle estensioni: {str(e)}")
-        
-        # Log del percorso delle impostazioni
-        settings_path = os.path.join(os.path.expanduser('~'), '.file_search_tool', 'application_settings.json')
-        self.log_debug(f"Impostazioni dell'applicazione salvate in {settings_path}")
-        
-        # Log delle impostazioni di ricerca
-        self.log_debug(f"Profondità ricerca: {getattr(self, 'max_depth', 0)}")
-        self.log_debug(f"Cerca nei file: {self.search_files.get()}")
-        self.log_debug(f"Cerca nelle cartelle: {self.search_folders.get()}")
-        self.log_debug(f"Cerca nei contenuti: {self.search_content.get()}")
-        self.log_debug(f"Parole intere: {getattr(self, 'whole_word_search', tk.BooleanVar()).get()}")
-        
-        # Log dei filtri avanzati
-        size_min_kb = getattr(self, 'advanced_filters', {}).get('size_min', 0) // 1024
-        size_max_kb = getattr(self, 'advanced_filters', {}).get('size_max', 0) // 1024
-        self.log_debug(f"Dimensione min (KB): {size_min_kb}")
-        self.log_debug(f"Dimensione max (KB): {size_max_kb}")
-        
-        date_min = getattr(self, 'advanced_filters', {}).get('date_min', '')
-        date_max = getattr(self, 'advanced_filters', {}).get('date_max', '')
-        self.log_debug(f"Data min: '{date_min}'")
-        self.log_debug(f"Data max: '{date_max}'")
-        
-        # Log delle impostazioni di gestione memoria
-        auto_memory = getattr(self, 'auto_memory_management', False)
-        memory_percent = getattr(self, 'memory_usage_percent', 38)
-        self.log_debug(f"Gestione memoria automatica: {auto_memory}")
-        self.log_debug(f"Percentuale utilizzo memoria: {memory_percent}%")
-        
-        # Log delle impostazioni di blocco
-        files_per_block = getattr(self, 'max_files_per_block', tk.IntVar()).get()
-        parallel_blocks = getattr(self, 'max_parallel_blocks', tk.IntVar()).get()
-        auto_adjust = getattr(self, 'block_size_auto_adjust', tk.BooleanVar()).get()
-        prioritize = getattr(self, 'prioritize_user_folders', tk.BooleanVar()).get()
-        self.log_debug(f"File per blocco: {files_per_block}")
-        self.log_debug(f"Blocchi paralleli: {parallel_blocks}")
-        self.log_debug(f"Auto-adattamento blocchi: {auto_adjust}")
-        self.log_debug(f"Priorità cartelle utente: {prioritize}")
-        
-        # Log delle impostazioni di timeout e limiti
-        timeout_enabled = getattr(self, 'timeout_enabled', tk.BooleanVar()).get()
-        timeout_seconds = getattr(self, 'timeout_seconds', tk.IntVar()).get()
-        max_files = getattr(self, 'max_files_to_check', tk.IntVar()).get()
-        max_results = getattr(self, 'max_results', tk.IntVar()).get()
-        worker_threads = getattr(self, 'worker_threads', tk.IntVar()).get()
-        max_file_size = getattr(self, 'max_file_size_mb', tk.IntVar()).get()
-        dir_size_calc = getattr(self, 'dir_size_calculation', tk.StringVar()).get()
-        
-        self.log_debug(f"Timeout attivo: {timeout_enabled}")
-        self.log_debug(f"Secondi timeout: {timeout_seconds}")
-        self.log_debug(f"Max file da controllare: {max_files}")
-        self.log_debug(f"Max risultati: {max_results}")
-        self.log_debug(f"Thread paralleli: {worker_threads}")
-        self.log_debug(f"Dimensione max file (MB): {max_file_size}")
-        self.log_debug(f"Modalità calcolo dimensioni: '{dir_size_calc}'")
-        
-        # Registra il footer
-        self.log_debug(footer)
-
-    @error_handler
     def log_debug(self, message):
         """Sistema di logging unificato che supporta sia la visualizzazione live che il logging storico
         e filtra i messaggi non necessari e le ripetizioni sulla soglia di memoria.
@@ -1324,6 +1236,95 @@ class FileSearchApp:
         if getattr(self, 'debug_mode', True):  # Default a True se debug_mode non è definito
             print(f"[DEBUG] {message}")
 
+    @error_handler
+    def log_current_settings(self, context="ricerca"):
+        """Funzione centralizzata per registrare le impostazioni correnti nel log."""
+        # Determina l'intestazione in base al contesto
+        if context == "ricerca":
+            header = "===== INIZIO RICERCA CON LE SEGUENTI IMPOSTAZIONI ====="
+            footer = "===== FINE LOGGING IMPOSTAZIONI - INIZIO RICERCA ====="
+        
+        # Registra l'intestazione
+        self.log_debug(header)
+        
+        # Log delle estensioni
+        mode = getattr(self, 'extension_mode', 'base')
+        try:
+            extensions = self.get_extension_settings(mode)
+            self.log_debug(f"Saved {len(extensions)} extensions for {mode} mode")
+            self.log_debug(f"Extensions: {', '.join(extensions)}")
+            self.log_debug(f"Aggiornata UI per modalità {mode}")
+        except Exception as e:
+            self.log_debug(f"Errore nel recupero delle estensioni: {str(e)}")
+        
+        # Log del percorso delle impostazioni
+        settings_path = os.path.join(os.path.expanduser('~'), '.file_search_tool', 'application_settings.json')
+        self.log_debug(f"Impostazioni dell'applicazione salvate in {settings_path}")
+        
+        # Log delle impostazioni di ricerca
+        self.log_debug(f"Profondità ricerca: {getattr(self, 'max_depth', 0)}")
+        self.log_debug(f"Cerca nei file: {self.search_files.get()}")
+        self.log_debug(f"Cerca nelle cartelle: {self.search_folders.get()}")
+        self.log_debug(f"Cerca nei contenuti: {self.search_content.get()}")
+        self.log_debug(f"Parole intere: {getattr(self, 'whole_word_search', tk.BooleanVar()).get()}")
+        
+        # Log dei filtri avanzati
+        size_min_kb = getattr(self, 'advanced_filters', {}).get('size_min', 0) // 1024
+        size_max_kb = getattr(self, 'advanced_filters', {}).get('size_max', 0) // 1024
+        self.log_debug(f"Dimensione min (KB): {size_min_kb}")
+        self.log_debug(f"Dimensione max (KB): {size_max_kb}")
+        
+        date_min = getattr(self, 'advanced_filters', {}).get('date_min', '')
+        date_max = getattr(self, 'advanced_filters', {}).get('date_max', '')
+        self.log_debug(f"Data min: '{date_min}'")
+        self.log_debug(f"Data max: '{date_max}'")
+        
+        # Log delle impostazioni di gestione memoria
+        auto_memory = getattr(self, 'auto_memory_management', False)
+        memory_percent = getattr(self, 'memory_usage_percent', 38)
+        self.log_debug(f"Gestione memoria automatica: {auto_memory}")
+        self.log_debug(f"Percentuale utilizzo memoria: {memory_percent}%")
+        
+        # Log delle impostazioni di blocco
+        files_per_block = getattr(self, 'max_files_per_block', tk.IntVar()).get()
+        parallel_blocks = getattr(self, 'max_parallel_blocks', tk.IntVar()).get()
+        auto_adjust = getattr(self, 'block_size_auto_adjust', tk.BooleanVar()).get()
+        prioritize = getattr(self, 'prioritize_user_folders', tk.BooleanVar()).get()
+        self.log_debug(f"File per blocco: {files_per_block}")
+        self.log_debug(f"Blocchi paralleli: {parallel_blocks}")
+        self.log_debug(f"Auto-adattamento blocchi: {auto_adjust}")
+        self.log_debug(f"Priorità cartelle utente: {prioritize}")
+        
+        # Log delle impostazioni di timeout e limiti
+        timeout_enabled = getattr(self, 'timeout_enabled', tk.BooleanVar()).get()
+        timeout_seconds = getattr(self, 'timeout_seconds', tk.IntVar()).get()
+        max_files = getattr(self, 'max_files_to_check', tk.IntVar()).get()
+        max_results = getattr(self, 'max_results', tk.IntVar()).get()
+        worker_threads = getattr(self, 'worker_threads', tk.IntVar()).get()
+        max_file_size = getattr(self, 'max_file_size_mb', tk.IntVar()).get()
+        dir_size_calc = getattr(self, 'dir_size_calculation', tk.StringVar()).get()
+        
+        self.log_debug(f"Timeout attivo: {timeout_enabled}")
+        self.log_debug(f"Secondi timeout: {timeout_seconds}")
+        self.log_debug(f"Max file da controllare: {max_files}")
+        self.log_debug(f"Max risultati: {max_results}")
+        self.log_debug(f"Thread paralleli: {worker_threads}")
+        self.log_debug(f"Dimensione max file (MB): {max_file_size}")
+        self.log_debug(f"Modalità calcolo dimensioni: '{dir_size_calc}'")
+        
+        # Log dei percorsi esclusi
+        excluded_paths = getattr(self, 'excluded_paths', [])
+        if excluded_paths:
+            self.log_debug(f"Numero percorsi esclusi: {len(excluded_paths)}")
+            self.log_debug("Percorsi esclusi:")
+            for idx, path in enumerate(excluded_paths, 1):
+                self.log_debug(f"  {idx}. {path}")
+        else:
+            self.log_debug("Nessun percorso escluso configurato")
+        
+        # Registra il footer
+        self.log_debug(footer)
+    
     @error_handler
     def add_new_logs_to_display(self):
         """Aggiunge solo i nuovi messaggi di log alla visualizzazione rispettando il filtro corrente"""
@@ -1923,7 +1924,7 @@ class FileSearchApp:
         
         # Log delle impostazioni correnti
         self.log_current_settings(context="ricerca")
-        
+
         # Mostra avviso se la ricerca nei contenuti è attivata
         if not self.show_content_search_warning():
             return  # Interrompi se l'utente annulla
@@ -7984,9 +7985,16 @@ class FileSearchApp:
                     var.set(ext in default_list)
         
         def save_settings():
-            # Log le impostazioni usando la funzione centralizzata
-            self.log_current_settings(context="estensioni")
+            # Save the selected extensions
+            selected_extensions = [ext for ext, var in ext_vars.items() if var.get()]
+            self.save_extension_settings(mode, selected_extensions)
             dialog.destroy()
+            
+            # Update the search_depth combo if needed
+            current_depth = self.search_depth.get()
+            if current_depth == mode:
+                # Refresh the UI to reflect the new settings
+                self.log_debug(f"Aggiornate le estensioni per la modalità {mode} ({len(selected_extensions)} estensioni)")
         
         # Buttons
         ttk.Button(btn_frame, text="Seleziona tutti", command=select_all).pack(side=LEFT, padx=5)
@@ -8082,14 +8090,6 @@ class FileSearchApp:
             normalized_extensions.append(ext.lower())
         
         self.extension_settings[mode] = normalized_extensions
-        
-        # Log what was saved
-        self.log_debug(f"Saved {len(normalized_extensions)} extensions for {mode} mode")
-        self.log_debug(f"Extensions: {', '.join(normalized_extensions)}")
-        
-        # Forza un aggiornamento dell'interfaccia se necessario
-        if hasattr(self, 'search_depth') and self.search_depth.get() == mode:
-            self.log_debug(f"Aggiornata UI per modalità {mode}")
             
         # Qui potresti aggiungere codice per salvare le impostazioni su file
         self.save_settings_to_file()
@@ -9144,8 +9144,110 @@ class FileSearchApp:
         self.create_tooltip(defaults_btn, "Ripristina tutte le impostazioni ai valori predefiniti")
         
         def save_options():
-            self.log_current_settings(context="modifica_avanzate")
-            dialog.destroy()
+            # Log dell'inizio dell'operazione
+            # self.log_debug("===== INIZIO MODIFICA IMPOSTAZIONI AVANZATE =====")
+            
+            try:
+                # Memorizza i valori precedenti per confronto
+                old_depth = self.max_depth
+                old_search_files = self.search_files.get()
+                old_search_folders = self.search_folders.get()
+                old_search_content = self.search_content.get()
+                old_whole_word = self.whole_word_search.get()
+                old_size_min = self.advanced_filters["size_min"]
+                old_size_max = self.advanced_filters["size_max"]
+                old_date_min = self.advanced_filters["date_min"]
+                old_date_max = self.advanced_filters["date_max"]
+                old_extensions = self.advanced_filters.get("extensions", [])
+                
+                # Memorizza i valori precedenti di gestione memoria
+                old_auto_memory = getattr(self, 'auto_memory_management', True)
+                old_memory_percent = getattr(self, 'memory_usage_percent', 75)
+                
+                # Inizializzazione sicura per excluded_paths
+                if hasattr(self, 'excluded_paths') and self.excluded_paths is not None:
+                    old_excluded_paths = self.excluded_paths.copy()
+                else:
+                    old_excluded_paths = []
+                    self.excluded_paths = []  # Inizializza se non esiste
+                    
+                old_max_files_block = self.max_files_per_block.get()
+                old_max_parallel = self.max_parallel_blocks.get()
+                old_auto_adjust = self.block_size_auto_adjust.get()
+                old_prioritize = self.prioritize_user_folders.get()
+                old_timeout_enabled = self.timeout_enabled.get()
+                old_timeout_seconds = self.timeout_seconds.get()
+                old_max_files = self.max_files_to_check.get()
+                old_max_results = self.max_results.get()
+                old_worker_threads = self.worker_threads.get()
+                old_max_file_size = self.max_file_size_mb.get()
+                old_dir_size_calc = self.dir_size_calculation.get()
+                
+                # Salva le opzioni di ricerca
+                self.max_depth = int(depth_var.get())
+                self.search_files.set(search_files_var.get())
+                self.search_folders.set(search_folders_var.get())
+                self.search_content.set(search_content_var.get())
+                self.whole_word_search.set(whole_word_var.get())
+                
+                # Salva i filtri avanzati
+                min_kb = int(min_size_var.get() or 0)
+                max_kb = int(max_size_var.get() or 0)
+                self.advanced_filters["size_min"] = min_kb * 1024
+                self.advanced_filters["size_max"] = max_kb * 1024 if max_kb > 0 else 0
+                
+                self.advanced_filters["date_min"] = min_date.entry.get().strip()
+                self.advanced_filters["date_max"] = max_date.entry.get().strip()
+                
+                # Salva i percorsi esclusi
+                new_excluded_paths = []
+                for item in excluded_list.get_children():
+                    values = excluded_list.item(item)["values"]
+                    if values:
+                        new_excluded_paths.append(values[0])
+                self.excluded_paths = new_excluded_paths
+                
+                # Salva le opzioni a blocchi
+                self.max_files_per_block.set(files_block_var.get())
+                self.max_parallel_blocks.set(parallel_var.get())
+                self.block_size_auto_adjust.set(auto_adjust_var.get())
+                self.prioritize_user_folders.set(prioritize_var.get())
+                
+                # Salva le opzioni di performance
+                self.timeout_enabled.set(timeout_enabled_var.get())
+                self.timeout_seconds.set(timeout_seconds_var.get())
+                self.max_files_to_check.set(max_files_var.get())
+                self.max_results.set(max_results_var.get())
+                self.worker_threads.set(threads_var.get())
+                self.max_file_size_mb.set(max_size_mb_var.get())
+                self.dir_size_calculation.set(dir_size_calc_var.get())
+                
+                # Salva le opzioni di gestione della memoria
+                self.auto_memory_management = auto_memory_var.get()
+                self.memory_usage_percent = memory_percent_var.get()
+            
+                #  Salva effettivamente le impostazioni su file
+                if hasattr(self, 'save_settings_to_file'):
+                    self.save_settings_to_file()
+                    self.log_debug("Impostazioni avanzate salvate su file permanente")
+                else:
+                    self.log_debug("AVVISO: Metodo save_settings_to_file non disponibile, salvataggio permanente non effettuato")
+            
+                messagebox.showinfo("Impostazioni", "Opzioni salvate con successo!")
+                dialog.destroy()
+                
+            except ValueError as e:
+                error_msg = f"Errore di valore non valido: {str(e)}"
+                self.log_debug(f"ERRORE SALVATAGGIO: {error_msg}")
+                messagebox.showerror("Errore", error_msg)
+                return
+            except Exception as e:
+                error_msg = f"Errore durante il salvataggio: {str(e)}"
+                self.log_debug(f"ERRORE SALVATAGGIO: {error_msg}")
+                import traceback
+                self.log_debug(traceback.format_exc())  # Registra il traceback completo dell'errore
+                messagebox.showerror("Errore", error_msg)
+                return
         
         cancel_btn = ttk.Button(btn_frame, text="Annulla", command=dialog.destroy)
         cancel_btn.pack(side=RIGHT, padx=5)
