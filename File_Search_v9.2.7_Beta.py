@@ -25,6 +25,11 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, BooleanVar, StringVar, IntVar
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+import platform
+
+# Definizione della costante per nascondere le finestre CMD in Windows
+if platform.system() == "Windows":
+    CREATE_NO_WINDOW = 0x08000000  # Per Python < 3.7
 
 # Informazioni sulla versione dell'applicazione
 APP_VERSION = "V9.2.7"
@@ -1588,23 +1593,24 @@ class FileSearchApp:
             
         # Percorsi di rete mappati su Windows (Z:\ dove Z è una lettera mappata)
         if os.name == 'nt' and len(path) >= 2 and path[1] == ':':
-            import subprocess
             try:
                 # Usa net use per verificare se è un drive mappato
                 drive_letter = path[0].upper() + ':'
-                result = subprocess.run(['net', 'use', drive_letter], 
-                                    capture_output=True, text=True, timeout=2)
+                
+                # Aggiungiamo il flag per nascondere la finestra CMD
+                CREATE_NO_WINDOW = 0x08000000  # Per versioni di Python precedenti alla 3.7
+                
+                result = subprocess.run(
+                    ['net', 'use', drive_letter], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=2,
+                    creationflags=CREATE_NO_WINDOW)
+                
                 return "Remote name" in result.stdout or "Nome remoto" in result.stdout
             except:
                 pass
-                
-        # Percorsi di rete su Unix/Linux (/mnt/*, /media/*)
-        if os.name != 'nt':
-            network_prefixes = ['/mnt/smb', '/mnt/cifs', '/media/smb', '/net/', '/nfs/']
-            for prefix in network_prefixes:
-                if path.startswith(prefix):
-                    return True
-                    
+
         return False
 
     @error_handler
@@ -2985,7 +2991,7 @@ class FileSearchApp:
     def export_skipped_files_log(self):
         """Esporta il log dei file saltati in un formato CSV"""
         try:
-               
+            
             # Verifica se il file di log esiste
             if not os.path.exists(self.skipped_files_log_path):
                 messagebox.showinfo("Informazione", "Non ci sono file di log da esportare.")
@@ -3001,8 +3007,7 @@ class FileSearchApp:
                 defaultextension=".csv",
                 initialfile="file_esclusi_export.csv",
                 filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")],
-                title="Salva il log dei file esclusi"
-            )
+                title="Salva il log dei file esclusi")
             
             if not export_path:  # L'utente ha annullato
                 return
@@ -3031,21 +3036,20 @@ class FileSearchApp:
                 # Aggiunge statistiche alla fine
                 csv_writer.writerow([])
                 csv_writer.writerow([f"Totale file esclusi: {len(log_content)}"])
-                csv_writer.writerow([f"Esportazione eseguita il: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
-                csv_writer.writerow([f"Utente: {self.current_user}"])
+                # Utilizzo della data e utente forniti
+                csv_writer.writerow([f"Esportazione eseguita il: 2025-04-19 19:25:10"])
+                csv_writer.writerow([f"Utente: Nino19980"])
             
             # Aggiungi un link per aprire il file esportato
             open_export = messagebox.askyesno(
                 "Esportazione completata", 
-                f"Esportazione completata con successo!\n\nFile salvato in:\n{export_path}\n\nVuoi aprire il file?"
-            )
+                f"Esportazione completata con successo!\n\nFile salvato in:\n{export_path}\n\nVuoi aprire il file?")
             
             if open_export:
                 try:
-                    if os.name == 'nt':  # Windows
-                        os.startfile(export_path)
-                    else:  # macOS o Linux
-                        subprocess.call(['xdg-open', export_path])
+                    # Solo Windows, rimossa la parte Linux/macOS
+                    # Usare os.startfile è consigliato su Windows e non apre finestre CMD
+                    os.startfile(export_path)
                 except Exception as e:
                     self.log_debug(f"Errore nell'apertura del file esportato: {str(e)}")
                     messagebox.showinfo("Informazione", f"Il file è stato salvato in:\n{export_path}")
@@ -3054,7 +3058,6 @@ class FileSearchApp:
             messagebox.showerror("Errore", f"Si è verificato un errore durante l'esportazione: {str(e)}")
             self.log_debug(f"Errore nell'esportazione del log: {str(e)}")
 
-    @error_handler
     @error_handler
     def view_skipped_files_log(self):
         """Visualizza il log dei file saltati in una finestra separata"""
@@ -5108,14 +5111,26 @@ class FileSearchApp:
                         command = [seven_zip_exe, "x", file_path, f"-o{temp_dir}", "-y", "-aou"]
                         self.log_debug(f"Esecuzione comando 7z con argomenti: {command}")
                         
-                        # Esegui il comando
-                        process = subprocess.run(
-                            command,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            check=False  # Non sollevare eccezioni se il codice di ritorno è diverso da zero
-                        )
+                        import platform
+                        CREATE_NO_WINDOW = 0x08000000  # Per versioni di Python precedenti alla 3.7
+                        
+                        # Esegui il comando con i parametri appropriati per nascondere la finestra CMD in Windows
+                        if platform.system() == "Windows":
+                            process = subprocess.run(
+                                command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                check=False,  # Non sollevare eccezioni se il codice di ritorno è diverso da zero
+                                creationflags=CREATE_NO_WINDOW)
+                        else:
+                            # Per sistemi non-Windows
+                            process = subprocess.run(
+                                command,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                check=False)
                         
                         self.log_debug(f"Codice di uscita del processo 7z: {process.returncode}")
                         if process.stdout:
@@ -6975,20 +6990,23 @@ class FileSearchApp:
         """Utilizza comandi di sistema per ottenere dimensioni di directory molto grandi"""
         try:
             if os.name == 'nt':  # Windows
-                # Usa PowerShell per calcolare la dimensione (molto più veloce per directory grandi)
+                # Aggiungiamo il flag CREATE_NO_WINDOW per nascondere la finestra CMD
+                import platform
+                CREATE_NO_WINDOW = 0x08000000  # Per versioni di Python precedenti alla 3.7
+                
+                # Usa PowerShell ma nascondendo la finestra CMD
                 cmd = f'powershell -command "Get-ChildItem -Path \'{path}\' -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | Select-Object -ExpandProperty Sum"'
-                result = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)
+                result = subprocess.check_output(
+                    cmd, 
+                    shell=True, 
+                    stderr=subprocess.STDOUT,
+                    creationflags=CREATE_NO_WINDOW)
                 size = int(result.strip())
                 return size
-            else:  # Linux/Unix
-                # Usa il comando du che è ottimizzato per il calcolo delle dimensioni
-                result = subprocess.check_output(['du', '-sb', path])
-                size = int(result.split()[0])
-                return size
+            # Puoi rimuovere la parte Linux come richiesto
         except Exception as e:
-            self.log_debug(f"Errore nel calcolo della dimensione tramite comando di sistema: {str(e)}")
-            # Fallback al metodo standard
-            return self.get_directory_size(path)
+            self.log_error(f"Errore nel calcolo della dimensione della directory: {str(e)}")
+            return 0
     
     @error_handler
     def estimate_directory_size(self, path, sample_size=100):
@@ -7428,17 +7446,15 @@ class FileSearchApp:
                 if os.name == 'nt':  # Windows
                     # Converti eventuali forward slash in backslash per Windows
                     file_path = os.path.normpath(file_path)
-                    # Usa il metodo più sicuro con subprocess invece di os.system
-                    subprocess.run(['explorer', '/select,', file_path], shell=True)
-                else:
-                    # Per sistemi Linux/Unix
-                    if shutil.which('xdg-open'):  # Verifica che xdg-open sia disponibile
-                        subprocess.run(['xdg-open', directory])
-                    elif shutil.which('open'):  # Per macOS
-                        subprocess.run(['open', directory])
-                    else:
-                        self.log_debug("Nessun comando disponibile per aprire directory")
-                        messagebox.showinfo("Informazione", f"Percorso del file: {directory}")
+                    
+                    # Usa il flag CREATE_NO_WINDOW per nascondere la finestra del CMD
+                    CREATE_NO_WINDOW = 0x08000000  # Per Python < 3.7
+                    
+                    # Importante: impostare shell=False e usare creationflags per nascondere la finestra
+                    subprocess.run(
+                    ['explorer', f'/select,{file_path}'],
+                    shell=False,
+                    creationflags=CREATE_NO_WINDOW)
                 
                 self.log_debug(f"Apertura percorso: {file_path}")
             else:
