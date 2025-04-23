@@ -13,6 +13,8 @@ import tempfile
 import datetime
 from enum import Enum
 import traceback
+import socket
+socket.setdefaulttimeout(10) 
 from typing import List, Dict, Any, Tuple, Set, Optional, Union, Callable
 
 # Importazione condizionale delle librerie di GUI e AI
@@ -165,20 +167,497 @@ class FileInfo:
         return "Algoritmo non supportato"
     
     def generate_preview(self) -> str:
-        """Genera un'anteprima del contenuto del file."""
+        """Genera un'anteprima del contenuto del file con supporto esteso per tutte le estensioni."""
         if self.preview:
             return self.preview
         
         try:
-            if self.extension in ['.txt', '.py', '.c', '.cpp', '.h', '.java', '.js', '.html', '.css', '.xml', '.json']:
+            # File di testo semplice
+            if self.extension in ['.txt', '.py', '.c', '.cpp', '.h', '.java', '.js', '.html', '.css', '.xml', '.json', 
+                                '.md', '.yaml', '.yml', '.ini', '.conf', '.log', '.bat', '.sh', '.ps1', '.rb', '.pl',
+                                '.php', '.go', '.rs', '.swift', '.kt', '.ts', '.jsx', '.tsx', '.csv', '.tsv']:
                 with open(self.full_path(), 'r', errors='ignore') as f:
                     self.preview = f.read(MAX_PREVIEW_SIZE)
                     if len(self.preview) == MAX_PREVIEW_SIZE:
                         self.preview += "...[contenuto troncato]"
+                        
+            # File PDF (richiede PyPDF2)
+            elif self.extension == '.pdf':
+                try:
+                    import PyPDF2
+                    with open(self.full_path(), 'rb') as f:
+                        try:
+                            reader = PyPDF2.PdfReader(f)  # Per PyPDF2 >= 3.0.0
+                        except AttributeError:
+                            reader = PyPDF2.PdfFileReader(f)  # Per PyPDF2 < 3.0.0
+                        
+                        text = ""
+                        for i in range(min(3, len(reader.pages))):  # Prime 3 pagine
+                            try:
+                                # Per PyPDF2 >= 3.0.0
+                                page_text = reader.pages[i].extract_text()
+                            except AttributeError:
+                                # Per PyPDF2 < 3.0.0
+                                page_text = reader.getPage(i).extractText()
+                            
+                            text += page_text + "\n"
+                        
+                        self.preview = text[:MAX_PREVIEW_SIZE]
+                        if len(text) > MAX_PREVIEW_SIZE:
+                            self.preview += "...[contenuto troncato]"
+                except ImportError:
+                    self.preview = "[Libreria PyPDF2 necessaria per visualizzare PDF]"
+                except Exception as e:
+                    self.preview = f"[Errore nell'estrazione del testo PDF: {str(e)}]"
+                    
+            # File Word (DOC/DOCX) con python-docx
+            elif self.extension in ['.docx', '.doc']:
+                try:
+                    # DOCX supportato nativamente
+                    if self.extension == '.docx':
+                        import docx
+                        doc = docx.Document(self.full_path())
+                        text = "\n".join([p.text for p in doc.paragraphs])
+                        self.preview = text[:MAX_PREVIEW_SIZE]
+                        if len(text) > MAX_PREVIEW_SIZE:
+                            self.preview += "...[contenuto troncato]"
+                    # DOC richiede conversione
+                    elif self.extension == '.doc':
+                        try:
+                            # Prova con antiword se disponibile
+                            import subprocess
+                            result = subprocess.run(['antiword', self.full_path()], 
+                                                capture_output=True, text=True, check=False)
+                            if result.returncode == 0:
+                                self.preview = result.stdout[:MAX_PREVIEW_SIZE]
+                                if len(result.stdout) > MAX_PREVIEW_SIZE:
+                                    self.preview += "...[contenuto troncato]"
+                            else:
+                                self.preview = "[Errore nell'estrazione del testo DOC]"
+                        except:
+                            self.preview = "[Antiword necessario per visualizzare file DOC]"
+                except ImportError:
+                    self.preview = "[Libreria python-docx necessaria per visualizzare DOCX]"
+            
+            # File Excel (XLSX/XLS) con openpyxl o xlrd
+            elif self.extension in ['.xlsx', '.xls']:
+                text = ""
+                try:
+                    # XLSX con openpyxl
+                    if self.extension == '.xlsx':
+                        import openpyxl
+                        wb = openpyxl.load_workbook(self.full_path(), read_only=True, data_only=True)
+                        # Estrai testo dalle prime 3 pagine o meno
+                        for sheet_name in list(wb.sheetnames)[:3]:
+                            sheet = wb[sheet_name]
+                            text += f"Foglio: {sheet_name}\n"
+                            row_count = 0
+                            for row in sheet.iter_rows(values_only=True):
+                                if row_count >= 20:  # Limita a 20 righe per foglio
+                                    break
+                                text += " | ".join([str(cell) if cell is not None else "" for cell in row]) + "\n"
+                                row_count += 1
+                            text += "\n"
+                    # XLS con xlrd
+                    elif self.extension == '.xls':
+                        try:
+                            import xlrd
+                            wb = xlrd.open_workbook(self.full_path())
+                            for sheet_idx in range(min(3, wb.nsheets)):
+                                sheet = wb.sheet_by_index(sheet_idx)
+                                text += f"Foglio: {sheet.name}\n"
+                                for row_idx in range(min(20, sheet.nrows)):
+                                    row = sheet.row_values(row_idx)
+                                    text += " | ".join([str(cell) for cell in row]) + "\n"
+                                text += "\n"
+                        except ImportError:
+                            text = "[Libreria xlrd necessaria per visualizzare XLS]"
+                    
+                    self.preview = text[:MAX_PREVIEW_SIZE]
+                    if len(text) > MAX_PREVIEW_SIZE:
+                        self.preview += "...[contenuto troncato]"
+                except ImportError:
+                    self.preview = "[Libreria openpyxl necessaria per visualizzare XLSX]"
+                except Exception as e:
+                    self.preview = f"[Errore nella lettura del file Excel: {str(e)}]"
+            
+            # File PowerPoint (PPTX/PPT)
+            elif self.extension in ['.pptx', '.ppt']:
+                try:
+                    if self.extension == '.pptx':
+                        import pptx
+                        presentation = pptx.Presentation(self.full_path())
+                        text = ""
+                        for i, slide in enumerate(presentation.slides):
+                            if i >= 5:  # Limita a 5 slide
+                                break
+                            text += f"Slide {i+1}:\n"
+                            for shape in slide.shapes:
+                                if shape.has_text_frame:
+                                    for paragraph in shape.text_frame.paragraphs:
+                                        text += paragraph.text + "\n"
+                            text += "\n"
+                        self.preview = text[:MAX_PREVIEW_SIZE]
+                        if len(text) > MAX_PREVIEW_SIZE:
+                            self.preview += "...[contenuto troncato]"
+                    else:  # .ppt
+                        self.preview = "[Anteprima non disponibile per file PPT. Convertire in PPTX]"
+                except ImportError:
+                    self.preview = "[Libreria python-pptx necessaria per visualizzare PPTX]"
+            
+            # File CSV/TSV
+            elif self.extension in ['.csv', '.tsv']:
+                try:
+                    import csv
+                    delimiter = ',' if self.extension == '.csv' else '\t'
+                    with open(self.full_path(), 'r', errors='ignore') as f:
+                        reader = csv.reader(f, delimiter=delimiter)
+                        text = ""
+                        for i, row in enumerate(reader):
+                            if i >= 50:  # Limita a 50 righe
+                                break
+                            text += " | ".join(row) + "\n"
+                    self.preview = text[:MAX_PREVIEW_SIZE]
+                    if len(text) > MAX_PREVIEW_SIZE:
+                        self.preview += "...[contenuto troncato]"
+                except Exception as e:
+                    self.preview = f"[Errore nella lettura del file tabellare: {str(e)}]"
+                    
+            # File di database
+            elif self.extension in ['.sqlite', '.db', '.sqlite3', '.db3', '.s3db', '.sl3', '.mdb', '.accdb']:
+                # Database SQLite
+                if self.extension in ['.sqlite', '.db', '.sqlite3', '.db3', '.s3db', '.sl3']:
+                    try:
+                        import sqlite3
+                        conn = sqlite3.connect(self.full_path())
+                        cursor = conn.cursor()
+                        # Ottieni l'elenco delle tabelle
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                        tables = cursor.fetchall()
+                        text = "Tabelle nel database SQLite:\n"
+                        for table in tables:
+                            table_name = table[0]
+                            text += f"- {table_name}\n"
+                            # Mostra la struttura della tabella
+                            cursor.execute(f"PRAGMA table_info({table_name})")
+                            columns = cursor.fetchall()
+                            text += "  Colonne: " + ", ".join([col[1] for col in columns]) + "\n"
+                            # Mostra i primi 5 record
+                            try:
+                                cursor.execute(f"SELECT * FROM {table_name} LIMIT 5")
+                                rows = cursor.fetchall()
+                                if rows:
+                                    text += "  Dati di esempio:\n"
+                                    for row in rows:
+                                        text += "    " + str(row) + "\n"
+                            except:
+                                text += "  [Errore nell'accesso ai dati]\n"
+                        conn.close()
+                        self.preview = text[:MAX_PREVIEW_SIZE]
+                        if len(text) > MAX_PREVIEW_SIZE:
+                            self.preview += "...[contenuto troncato]"
+                    except ImportError:
+                        self.preview = "[SQLite3 necessario per visualizzare database]"
+                    
+                # Database Microsoft Access
+                elif self.extension in ['.mdb', '.accdb']:
+                    try:
+                        # Prova con pyodbc
+                        import pyodbc
+                        # Connessione a Microsoft Access
+                        try:
+                            # Cerca il driver appropriato
+                            drivers = [
+                                '{Microsoft Access Driver (*.mdb, *.accdb)}',
+                                '{Microsoft Access Driver (*.mdb)}',
+                                '{Microsoft Access Driver (*.accdb)}'
+                            ]
+                            
+                            connection_string = None
+                            for driver in drivers:
+                                try:
+                                    connection_string = f"DRIVER={driver};DBQ={self.full_path()};ReadOnly=1"
+                                    conn = pyodbc.connect(connection_string)
+                                    break
+                                except:
+                                    continue
+                            
+                            if conn:
+                                cursor = conn.cursor()
+                                # Ottieni elenco delle tabelle
+                                tables = []
+                                for table_info in cursor.tables(tableType='TABLE'):
+                                    if table_info.table_name[:4] != 'MSys':  # Esclude tabelle di sistema
+                                        tables.append(table_info.table_name)
+                                
+                                text = f"Tabelle nel database Access ({self.extension}):\n"
+                                for table_name in tables:
+                                    text += f"- {table_name}\n"
+                                    
+                                    # Ottieni struttura tabella
+                                    try:
+                                        columns = []
+                                        for column in cursor.columns(table=table_name):
+                                            columns.append(column.column_name)
+                                        
+                                        text += "  Colonne: " + ", ".join(columns) + "\n"
+                                        
+                                        # Mostra i primi 5 record
+                                        cursor.execute(f"SELECT * FROM [{table_name}]")
+                                        rows = cursor.fetchmany(5)
+                                        if rows:
+                                            text += "  Dati di esempio:\n"
+                                            for row in rows:
+                                                # Converti i valori non stringa in stringhe
+                                                row_str = []
+                                                for val in row:
+                                                    if val is None:
+                                                        row_str.append("NULL")
+                                                    elif isinstance(val, (bytes, bytearray)):
+                                                        row_str.append("[BINARY DATA]")
+                                                    else:
+                                                        row_str.append(str(val))
+                                                text += "    " + str(tuple(row_str)) + "\n"
+                                    except Exception as e:
+                                        text += f"  [Errore nella lettura della tabella: {str(e)}]\n"
+                                
+                                conn.close()
+                                self.preview = text[:MAX_PREVIEW_SIZE]
+                                if len(text) > MAX_PREVIEW_SIZE:
+                                    self.preview += "...[contenuto troncato]"
+                            else:
+                                self.preview = f"[Non è stato possibile trovare un driver ODBC per {self.extension}]"
+                        except Exception as e:
+                            self.preview = f"[Errore nella connessione al database Access: {str(e)}]"
+                    except ImportError:
+                        try:
+                            # Alternativa con mdbtools (solo Linux/Mac)
+                            import subprocess
+                            import platform
+                            
+                            if platform.system() in ['Linux', 'Darwin']:
+                                # Ottieni elenco delle tabelle con mdb-tables
+                                tables_cmd = ['mdb-tables', '-1', self.full_path()]
+                                tables_result = subprocess.run(tables_cmd, capture_output=True, text=True, check=False)
+                                
+                                if tables_result.returncode == 0:
+                                    tables = tables_result.stdout.strip().split('\n')
+                                    text = f"Tabelle nel database Access ({self.extension}):\n"
+                                    
+                                    for table_name in tables:
+                                        if table_name and not table_name.startswith('MSys'):
+                                            text += f"- {table_name}\n"
+                                            
+                                            # Ottieni struttura con mdb-schema
+                                            try:
+                                                schema_cmd = ['mdb-schema', '-T', table_name, self.full_path()]
+                                                schema_result = subprocess.run(schema_cmd, capture_output=True, text=True, check=False)
+                                                if schema_result.returncode == 0:
+                                                    schema_text = schema_result.stdout
+                                                    # Estrai i nomi delle colonne dal CREATE TABLE
+                                                    if "CREATE TABLE" in schema_text:
+                                                        columns_section = schema_text.split("CREATE TABLE")[1].split(")", 1)[0]
+                                                        column_lines = columns_section.strip().split("\n")
+                                                        columns = []
+                                                        for line in column_lines[1:]:  # Skip the table name line
+                                                            if line.strip() and "," in line:
+                                                                col_name = line.strip().split()[0].strip()
+                                                                columns.append(col_name)
+                                                        
+                                                        if columns:
+                                                            text += "  Colonne: " + ", ".join(columns) + "\n"
+                                            except:
+                                                pass
+                                            
+                                            # Ottieni dati di esempio con mdb-export
+                                            try:
+                                                export_cmd = ['mdb-export', self.full_path(), table_name]
+                                                export_result = subprocess.run(export_cmd, capture_output=True, text=True, check=False)
+                                                if export_result.returncode == 0:
+                                                    rows = export_result.stdout.strip().split('\n')
+                                                    if len(rows) > 1:  # Il primo è l'intestazione
+                                                        text += "  Dati di esempio:\n"
+                                                        for i, row in enumerate(rows[1:6]):  # Limitati a 5 righe dopo l'intestazione
+                                                            text += f"    {row}\n"
+                                            except:
+                                                pass
+                                    
+                                    self.preview = text[:MAX_PREVIEW_SIZE]
+                                    if len(text) > MAX_PREVIEW_SIZE:
+                                        self.preview += "...[contenuto troncato]"
+                                else:
+                                    self.preview = "[Errore nell'utilizzo di mdbtools per accedere al database Access]"
+                            else:
+                                self.preview = "[Su Windows, installare pyodbc per visualizzare database Access]"
+                        except:
+                            self.preview = "[Libreria pyodbc necessaria per visualizzare database Access. In alternativa, mdbtools su Linux/Mac]"
+
+            # File immagine
+            elif self.extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.svg', '.webp']:
+                try:
+                    from PIL import Image
+                    img = Image.open(self.full_path())
+                    self.preview = f"[Immagine: {self.name}]\n"
+                    self.preview += f"Dimensioni: {img.width}x{img.height} pixel\n"
+                    self.preview += f"Formato: {img.format}\n"
+                    self.preview += f"Modalità: {img.mode}\n"
+                    
+                    # Prova a estrarre metadati
+                    if hasattr(img, '_getexif') and img._getexif():
+                        from PIL.ExifTags import TAGS
+                        exif = {
+                            TAGS.get(k, k): v
+                            for k, v in img._getexif().items()
+                            if k in TAGS and isinstance(v, (str, int, float))
+                        }
+                        self.preview += "Metadati EXIF:\n"
+                        for k, v in list(exif.items())[:10]:  # Limita a 10 metadati
+                            self.preview += f"  {k}: {v}\n"
+                except ImportError:
+                    self.preview = f"[Immagine: {self.name}]\n[Libreria Pillow necessaria per visualizzare dettagli]"
+                except Exception as e:
+                    self.preview = f"[Immagine: {self.name}]\n[Errore nell'analisi: {str(e)}]"
+            
+            # File audio/video
+            elif self.extension in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.mp4', '.avi', '.mov', '.wmv', '.mkv', '.webm']:
+                media_type = "Audio" if self.extension in ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma'] else "Video"
+                try:
+                    # Verifica disponibilità di ffprobe
+                    import subprocess
+                    result = subprocess.run(['ffprobe', '-v', 'error', '-show_format', '-show_streams', self.full_path()], 
+                                        capture_output=True, text=True, check=False)
+                    if result.returncode == 0:
+                        text = f"[File {media_type}: {self.name}]\n"
+                        text += f"Output ffprobe:\n{result.stdout}"
+                        self.preview = text[:MAX_PREVIEW_SIZE]
+                    else:
+                        self.preview = f"[File {media_type}: {self.name}]\n[Errore nell'analisi con ffprobe]"
+                except:
+                    # Alternativa con metadati manuali
+                    self.preview = f"[File {media_type}: {self.name}]\n"
+                    self.preview += f"Dimensione: {self.get_formatted_size()}\n"
+                    self.preview += "[FFprobe (parte di FFmpeg) necessario per visualizzare dettagli]"
+            
+            # File di archivio
+            elif self.extension in ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz']:
+                text = f"[Archivio: {self.name}]\n"
+                try:
+                    if self.extension == '.zip':
+                        import zipfile
+                        with zipfile.ZipFile(self.full_path(), 'r') as archive:
+                            file_list = archive.namelist()
+                            text += f"Numero di file: {len(file_list)}\n"
+                            text += "Contenuto (primi 20 file):\n"
+                            for file in file_list[:20]:
+                                info = archive.getinfo(file)
+                                text += f"- {file} ({info.file_size} bytes)\n"
+                    elif self.extension in ['.tar', '.gz', '.bz2', '.xz']:
+                        import tarfile
+                        with tarfile.open(self.full_path(), 'r:*') as archive:
+                            file_list = archive.getnames()
+                            text += f"Numero di file: {len(file_list)}\n"
+                            text += "Contenuto (primi 20 file):\n"
+                            for file in file_list[:20]:
+                                text += f"- {file}\n"
+                    else:  # .rar, .7z
+                        try:
+                            import py7zr
+                            if self.extension == '.7z':
+                                with py7zr.SevenZipFile(self.full_path(), 'r') as archive:
+                                    file_list = archive.getnames()
+                                    text += f"Numero di file: {len(file_list)}\n"
+                                    text += "Contenuto (primi 20 file):\n"
+                                    for file in file_list[:20]:
+                                        text += f"- {file}\n"
+                            else:
+                                text += "[Importazione del contenuto RAR non supportata]\n"
+                        except ImportError:
+                            text += "[Libreria py7zr necessaria per visualizzare 7z]\n"
+                    
+                    self.preview = text[:MAX_PREVIEW_SIZE]
+                    if len(text) > MAX_PREVIEW_SIZE:
+                        self.preview += "...[contenuto troncato]"
+                except Exception as e:
+                    self.preview = f"{text}[Errore nell'analisi dell'archivio: {str(e)}]"
+            
+            # File eseguibili
+            elif self.extension in ['.exe', '.dll', '.so', '.dylib', '.bin', '.app']:
+                text = f"[File binario: {self.name}]\n"
+                text += f"Tipo: {'Eseguibile' if self.extension in ['.exe', '.app'] else 'Libreria'}\n"
+                text += f"Dimensione: {self.get_formatted_size()}\n"
+                
+                try:
+                    import platform
+                    if platform.system() == "Windows" and self.extension == '.exe':
+                        # Su Windows prova a ottenere la versione del file
+                        import win32api
+                        try:
+                            info = win32api.GetFileVersionInfo(self.full_path(), "\\")
+                            ms = info['FileVersionMS']
+                            ls = info['FileVersionLS']
+                            file_version = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+                            text += f"Versione: {file_version}\n"
+                        except:
+                            pass
+                    elif platform.system() == "Linux" and self.extension in ['.so', '.bin']:
+                        # Su Linux prova a usare 'file' command
+                        import subprocess
+                        result = subprocess.run(['file', self.full_path()], 
+                                            capture_output=True, text=True, check=False)
+                        if result.returncode == 0:
+                            text += f"Info: {result.stdout.split(':', 1)[1].strip()}\n"
+                except:
+                    pass
+                    
+                self.preview = text
+            
+            # File di testo non riconosciuti - prova a leggerli comunque
+            elif not self.extension or self.extension not in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.exe', '.dll']:
+                # Prova a vedere se è un file di testo
+                try:
+                    with open(self.full_path(), 'rb') as f:
+                        chunk = f.read(4096)  # Leggi i primi 4KB
+                        is_text = True
+                        for byte in chunk:
+                            # Se troviamo troppi caratteri non ASCII o binari, probabilmente non è testo
+                            if byte < 9 or (byte > 13 and byte < 32) or byte > 126:
+                                is_text = False
+                                # Consentiamo alcuni caratteri di controllo (tab, LF, CR)
+                                if byte not in [9, 10, 13] and byte < 32:
+                                    break
+                        
+                        if is_text:
+                            with open(self.full_path(), 'r', errors='ignore') as f:
+                                self.preview = f.read(MAX_PREVIEW_SIZE)
+                                if len(self.preview) == MAX_PREVIEW_SIZE:
+                                    self.preview += "...[contenuto troncato]"
+                        else:
+                            self.preview = f"[Contenuto binario o non testuale: {self.name}]"
+                except:
+                    self.preview = f"[Impossibile leggere: {self.name}]"
+            
+            # Altri tipi di file
             else:
-                self.preview = "[Anteprima non disponibile per questo tipo di file]"
+                self.preview = f"[Anteprima non disponibile per {self.extension}]"
+                
         except Exception as e:
             self.preview = f"[Errore nella generazione dell'anteprima: {str(e)}]"
+        
+        # Aggiungi metadati comuni in fondo
+        try:
+            metadata = f"\n\n--- INFORMAZIONI FILE ---\n"
+            metadata += f"Nome: {self.name}\n"
+            metadata += f"Percorso: {self.path}\n"
+            metadata += f"Dimensione: {self.get_formatted_size()}\n"
+            metadata += f"Ultima modifica: {self.get_formatted_date(self.last_modified)}\n"
+            metadata += f"Creato il: {self.get_formatted_date(self.creation_time)}\n"
+            metadata += f"Utente: Nino19980 | Data: 2025-04-23 08:25:19"
+            
+            # Aggiungi i metadati solo se c'è spazio
+            if len(self.preview) + len(metadata) <= MAX_PREVIEW_SIZE:
+                self.preview += metadata
+        except:
+            pass
         
         return self.preview
     
@@ -411,64 +890,193 @@ class FileSearcher:
         
         return all_files
     
-    def _search_thread(self, 
-                      start_paths: List[str], 
-                      search_text: str, 
-                      extensions: List[str], 
-                      max_depth: int,
-                      recursive: bool) -> None:
+    def _search_thread(self, start_paths: List[str], search_text: str, extensions: List[str], max_depth: int,
+                  recursive: bool) -> None:
         """Thread di ricerca che esplora directory e sottodirectory."""
         files_checked = 0
         dirs_checked = 0
         
+        # Timeout per operazioni su percorsi di rete
+        network_timeout = 5  # secondi
+        
         for start_path in start_paths:
-            if not os.path.exists(start_path):
-                logger.warning(f"Il percorso {start_path} non esiste")
-                continue
-            
-            for root, dirs, files in os.walk(start_path):
-                if self.stop_event.is_set():
-                    return
+            # Verifica se è un percorso di rete
+            is_network_path = False
+            if sys.platform == 'win32':
+                # In Windows, i percorsi di rete iniziano con \\ o contengono un nome server
+                is_network_path = start_path.startswith('\\\\') or ':' not in start_path[:2]
+            else:
+                # Su Unix, verifica mount points NFS/SMB/CIFS
+                is_network_path = '//' in start_path or any(mp in start_path for mp in ['/mnt/', '/media/', '/net/'])
                 
-                # Controlla la profondità
+            try:
+                # Verifica esistenza del percorso con timeout per percorsi di rete
+                if is_network_path:
+                    # Imposta un timeout per la verifica dell'esistenza del percorso
+                    import signal
+                    
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError(f"Timeout nel controllo di {start_path}")
+                    
+                    # Configura il gestore di timeout solo su sistemi Unix
+                    if sys.platform != 'win32':
+                        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                        signal.alarm(network_timeout)
+                    
+                    try:
+                        path_exists = os.path.exists(start_path)
+                        
+                        # Disattiva l'allarme solo su sistemi Unix
+                        if sys.platform != 'win32':
+                            signal.alarm(0)
+                            signal.signal(signal.SIGALRM, old_handler)
+                        
+                        if not path_exists:
+                            logger.warning(f"Il percorso di rete {start_path} non esiste o non è accessibile")
+                            continue
+                    except TimeoutError as e:
+                        logger.warning(f"{str(e)}. Il percorso potrebbe essere lento o non accessibile")
+                        
+                        # Disattiva l'allarme solo su sistemi Unix
+                        if sys.platform != 'win32':
+                            signal.alarm(0)
+                            signal.signal(signal.SIGALRM, old_handler)
+                        
+                        continue
+                    except Exception as e:
+                        # Disattiva l'allarme solo su sistemi Unix
+                        if sys.platform != 'win32':
+                            signal.alarm(0)
+                            signal.signal(signal.SIGALRM, old_handler)
+                        
+                        logger.warning(f"Errore nel controllo del percorso {start_path}: {str(e)}")
+                        continue
+                elif not os.path.exists(start_path):
+                    logger.warning(f"Il percorso {start_path} non esiste")
+                    continue
+                
+                try:
+                    # Uso di os.scandir invece di os.walk per migliori performance
+                    # e migliore gestione degli errori
+                    for root, dirs, files in self._safe_walk(start_path, recursive, max_depth):
+                        if self.stop_event.is_set():
+                            return
+                        
+                        # Incrementa il conteggio delle directory
+                        dirs_checked += 1
+                        
+                        # Controlla i file
+                        for name in files:
+                            if self.stop_event.is_set():
+                                return
+                            
+                            files_checked += 1
+                            
+                            # Applica filtro per estensione
+                            _, ext = os.path.splitext(name)
+                            if extensions and ext.lower() not in extensions:
+                                continue
+                            
+                            try:
+                                file_path = os.path.join(root, name)
+                                
+                                # Gestione speciale per file di grandi dimensioni
+                                file_size = self._safe_get_file_size(file_path, is_network_path)
+                                if file_size is None:
+                                    continue  # Salta il file se non possiamo ottenere la dimensione
+                                
+                                # Crea FileInfo con il controllo di dimensioni file
+                                file_info = FileInfo(root, name, file_size)
+                                file_info.category = self.ai_engine.categorize_file(file_info)
+                                self.files_queue.put(file_info)
+                                
+                            except (PermissionError, OSError) as e:
+                                logger.error(f"Errore nell'accesso al file {os.path.join(root, name)}: {e}")
+                        
+                        # Aggiorna il conteggio
+                        self.files_queue.put((files_checked, dirs_checked))
+                except (PermissionError, OSError) as e:
+                    logger.error(f"Errore nell'accesso alla directory {start_path}: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Errore imprevisto durante la ricerca in {start_path}: {str(e)}")
+
+    def _safe_walk(self, path, recursive, max_depth):
+        """Versione sicura di os.walk con gestione degli errori."""
+        try:
+            root_depth = path.count(os.sep)
+            for root, dirs, files in os.walk(path):
+                # Controlla la profondità se specificata
                 if max_depth >= 0:
-                    relative_path = os.path.relpath(root, start_path)
-                    depth = len(relative_path.split(os.sep)) if relative_path != '.' else 0
-                    if depth > max_depth:
+                    current_depth = root.count(os.sep) - root_depth
+                    if current_depth > max_depth:
                         dirs.clear()  # Impedisce di andare più in profondità
                         continue
                 
-                # Incrementa il conteggio delle directory
-                dirs_checked += 1
-                
-                # Se non ricorsivo, svuota la lista delle directory
-                if not recursive:
+                # Se non ricorsivo, svuota la lista delle directory dopo il primo livello
+                if not recursive and root != path:
                     dirs.clear()
                 
-                # Controlla i file
-                for name in files:
-                    if self.stop_event.is_set():
-                        return
-                    
-                    files_checked += 1
-                    
-                    # Applica filtro per estensione
-                    _, ext = os.path.splitext(name)
-                    if extensions and ext.lower() not in extensions:
-                        continue
-                    
+                # Rimuovi le directory a cui non possiamo accedere
+                i = 0
+                while i < len(dirs):
+                    dir_path = os.path.join(root, dirs[i])
                     try:
-                        file_path = os.path.join(root, name)
-                        if os.path.isfile(file_path):
-                            size = os.path.getsize(file_path)
-                            file_info = FileInfo(root, name, size)
-                            file_info.category = self.ai_engine.categorize_file(file_info)
-                            self.files_queue.put(file_info)
-                    except (PermissionError, OSError) as e:
-                        logger.error(f"Errore nell'accesso al file {os.path.join(root, name)}: {e}")
+                        # Prova ad accedere alla directory
+                        os.listdir(dir_path)
+                        i += 1
+                    except (PermissionError, OSError):
+                        # Rimuovi la directory
+                        dirs.pop(i)
                 
-                # Aggiorna il conteggio
-                self.files_queue.put((files_checked, dirs_checked))
+                # Filtra i file a cui possiamo davvero accedere
+                accessible_files = []
+                for f in files:
+                    try:
+                        file_path = os.path.join(root, f)
+                        if os.path.isfile(file_path):
+                            accessible_files.append(f)
+                    except (PermissionError, OSError):
+                        pass
+                
+                yield root, dirs, accessible_files
+        except (PermissionError, OSError) as e:
+            logger.error(f"Errore durante l'esplorazione di {path}: {e}")
+            yield path, [], []  # Restituisci percorso vuoto
+
+    def _safe_get_file_size(self, file_path, is_network_path):
+        """Ottiene in modo sicuro la dimensione di un file, gestendo timeout per percorsi di rete."""
+        try:
+            if is_network_path and sys.platform != 'win32':
+                # Imposta un timeout per l'accesso a file di rete su sistemi Unix
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError(f"Timeout nel controllo della dimensione di {file_path}")
+                
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(3)  # 3 secondi di timeout
+                
+                try:
+                    file_size = os.path.getsize(file_path)
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+                    return file_size
+                except TimeoutError:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+                    logger.warning(f"Timeout durante l'accesso al file {file_path}")
+                    return None
+                except Exception as e:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+                    logger.error(f"Errore nel controllo della dimensione di {file_path}: {str(e)}")
+                    return None
+            else:
+                return os.path.getsize(file_path)
+        except (PermissionError, OSError) as e:
+            logger.error(f"Errore nell'accesso al file {file_path}: {e}")
+            return None
     
     def stop_search(self) -> None:
         """Ferma tutte le ricerche in corso."""
