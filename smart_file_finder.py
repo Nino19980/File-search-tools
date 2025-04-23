@@ -65,7 +65,7 @@ logger = logging.getLogger("SmartFileFinder")
 
 # Costanti
 DEFAULT_EXTENSIONS = [".txt", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"]
-MAX_PREVIEW_SIZE = 10 * 1024  # 10KB
+MAX_PREVIEW_SIZE = 100 * 1024  # 10KB
 DEFAULT_AI_THRESHOLD = 0.3
 CHUNK_SIZE = 8192  # Per la lettura dei file
 MAX_THREADS = 8
@@ -254,12 +254,27 @@ class AIEngine:
     
     def score_file_relevance(self, file_info: FileInfo, search_text: str) -> float:
         """Calcola un punteggio di rilevanza del file rispetto alla query di ricerca."""
+        if not search_text:
+            return 1.0  # Se non c'è un testo di ricerca, tutti i file sono rilevanti
+            
+        # Verifica prima se la query è presente nel nome del file (peso maggiore)
+        filename = file_info.name.lower()
+        search_lower = search_text.lower()
+        name_match = search_lower in filename
+        
+        # Punteggio base se c'è una corrispondenza nel nome
+        if name_match:
+            return 1.0 - (len(filename) - len(search_lower)) / (len(filename) * 2)
+        
         if not HAS_AI_LIBS or not self.vectorizer:
             # Fallback a ricerca semplice quando l'AI non è disponibile
-            filename = file_info.name.lower()
-            search_lower = search_text.lower()
-            if search_lower in filename:
-                return 1.0 - (len(filename) - len(search_lower)) / len(filename)
+            # Qui controlliamo anche se la stringa è nel contenuto del file
+            if not file_info.preview:
+                file_info.generate_preview()
+                
+            if file_info.preview and search_lower in file_info.preview.lower():
+                # Match nel contenuto ma non nel nome (peso minore)
+                return 0.6
             return 0.0
         
         try:
@@ -440,11 +455,6 @@ class FileSearcher:
                     # Applica filtro per estensione
                     _, ext = os.path.splitext(name)
                     if extensions and ext.lower() not in extensions:
-                        continue
-                    
-                    # Applica filtro per nome se specificato
-                    if search_text and search_text.lower() not in name.lower():
-                        # Saltiamo il controllo AI qui per efficienza, verrà fatto dopo
                         continue
                     
                     try:
@@ -788,7 +798,7 @@ class TkinterGUI:
         path_frame.pack(fill=tk.X, pady=5)
         
         ttk.Label(path_frame, text="Percorso:").pack(side=tk.LEFT, padx=(0, 5))
-        self.path_var = tk.StringVar(value=os.path.expanduser("~"))
+        self.path_var = tk.StringVar(value="")
         self.path_entry = ttk.Entry(path_frame, textvariable=self.path_var)
         self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         ttk.Button(path_frame, text="Sfoglia...", command=self.browse_path).pack(side=tk.LEFT)
@@ -805,11 +815,16 @@ class TkinterGUI:
         options_frame = ttk.Frame(search_frame)
         options_frame.pack(fill=tk.X, pady=5)
         
-        # Estensioni dei file
-        ttk.Label(options_frame, text="Estensioni:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        # Estensioni dei file (modifica)
+        ext_frame = ttk.Frame(options_frame)
+        ext_frame.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=(0, 5))
+
+        ttk.Label(ext_frame, text="Estensioni:").pack(side=tk.LEFT, padx=(0, 5))
         self.extensions_var = tk.StringVar(value=".txt, .pdf, .doc, .docx")
-        ttk.Entry(options_frame, textvariable=self.extensions_var).grid(row=0, column=1, sticky=tk.EW, padx=5)
-        
+        ttk.Entry(ext_frame, textvariable=self.extensions_var, width=30).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(ext_frame, text="Scegli estensioni...", 
+                command=self.create_extension_selector_dialog).pack(side=tk.LEFT)
+
         # Ricerca ricorsiva
         self.recursive_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Ricerca ricorsiva", variable=self.recursive_var).grid(row=0, column=2, padx=5)
@@ -890,6 +905,187 @@ class TkinterGUI:
         admin_label = ttk.Label(status_frame, text=admin_text, anchor=tk.E)
         admin_label.pack(side=tk.RIGHT, pady=(5, 0))
     
+    def create_extension_selector_dialog(self):
+        """Crea una finestra di dialogo per selezionare le estensioni dei file."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Seleziona Estensioni")
+        dialog.geometry("650x500")  # Finestra più larga per supportare il layout orizzontale
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Intestazione
+        ttk.Label(main_frame, text="Seleziona le estensioni di file da includere nella ricerca:", 
+                font=self.title_font).pack(anchor=tk.W, pady=(0, 10))
+        
+        # Frame per le categorie
+        categories_frame = ttk.Frame(main_frame)
+        categories_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Crea un notebook con schede per le diverse categorie
+        notebook = ttk.Notebook(categories_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # Definiamo le categorie di estensioni
+        categories = {
+            "Documenti": [".txt", ".pdf", ".doc", ".docx", ".rtf", ".odt", ".md", ".tex"],
+            "Fogli di calcolo": [".xls", ".xlsx", ".csv", ".ods", ".numbers"],
+            "Presentazioni": [".ppt", ".pptx", ".odp", ".key"],
+            "Immagini": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".svg", ".webp"],
+            "Video": [".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm"],
+            "Audio": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma"],
+            "Codice": [".py", ".java", ".c", ".cpp", ".h", ".js", ".html", ".css", ".php", ".rb", ".go", ".rs", ".ts"],
+            "Database": [".db", ".sqlite", ".sql", ".mdb", ".accdb", ".dbf", ".mdf", ".ndf", ".bak", ".frm", ".ibd", ".myi", ".myd"],
+            "Archivi": [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"],
+            "Altri": [".exe", ".dll", ".so", ".app", ".json", ".xml", ".log", ".ini", ".conf", ".yaml", ".yml"]
+        }
+        
+        # Dizionario per tenere traccia delle variabili delle checkbox
+        self.extension_vars = {}
+        
+        # Crea una scheda per ogni categoria
+        for category, extensions in categories.items():
+            # Crea un frame per la categoria
+            category_frame = ttk.Frame(notebook, padding=10)
+            notebook.add(category_frame, text=category)
+            
+            # Pulsanti Seleziona tutti / Deseleziona tutti
+            buttons_frame = ttk.Frame(category_frame)
+            buttons_frame.pack(fill=tk.X, pady=(0, 10))
+            
+            def select_all(category=category):
+                for ext in categories[category]:
+                    if ext in self.extension_vars:
+                        self.extension_vars[ext].set(True)
+            
+            def deselect_all(category=category):
+                for ext in categories[category]:
+                    if ext in self.extension_vars:
+                        self.extension_vars[ext].set(False)
+            
+            ttk.Button(buttons_frame, text="Seleziona tutti", 
+                    command=lambda cat=category: select_all(cat)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(buttons_frame, text="Deseleziona tutti", 
+                    command=lambda cat=category: deselect_all(cat)).pack(side=tk.LEFT, padx=5)
+            
+            # Crea un frame con scrollbar per le checkbox
+            scroll_frame = ttk.Frame(category_frame)
+            scroll_frame.pack(fill=tk.BOTH, expand=True)
+            
+            canvas = tk.Canvas(scroll_frame)
+            scrollbar = ttk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e, canvas=canvas: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Layout orizzontale per le checkbox (3 colonne)
+            checkbox_frames = [ttk.Frame(scrollable_frame) for _ in range(3)]
+            for frame in checkbox_frames:
+                frame.pack(side=tk.LEFT, fill=tk.Y, expand=True, padx=5)
+            
+            # Ottieni le estensioni correnti
+            current_exts = self.get_extensions_list()
+            
+            # Distribuisci le checkbox nelle colonne
+            for i, ext in enumerate(extensions):
+                column = i % 3  # Determina in quale colonna va questa checkbox
+                
+                var = tk.BooleanVar(value=False)
+                self.extension_vars[ext] = var
+                
+                # Se l'estensione è già nel campo, selezionala
+                if current_exts and ext in current_exts:
+                    var.set(True)
+                
+                ttk.Checkbutton(checkbox_frames[column], text=ext, variable=var).pack(anchor=tk.W, pady=2)
+        
+        # Frame per estensioni personalizzate
+        custom_frame = ttk.LabelFrame(main_frame, text="Estensioni personalizzate", padding=10)
+        custom_frame.pack(fill=tk.X, pady=10)
+        
+        # Campo di testo per estensioni personalizzate
+        ttk.Label(custom_frame, text="Inserisci estensioni personalizzate separate da virgole:").pack(anchor=tk.W, pady=(0, 5))
+        
+        # Prendiamo le estensioni attuali che non sono nel nostro elenco predefinito
+        all_predefined_exts = [ext for exts in categories.values() for ext in exts]
+        custom_exts = []
+        current_exts = self.get_extensions_list()
+        if current_exts:
+            custom_exts = [ext for ext in current_exts if ext not in all_predefined_exts]
+        
+        self.custom_exts_var = tk.StringVar(value=", ".join(custom_exts))
+        ttk.Entry(custom_frame, textvariable=self.custom_exts_var).pack(fill=tk.X, pady=5)
+        
+        # Frame per i pulsanti
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        # Pulsante per selezionare tutte le estensioni
+        def select_all_extensions():
+            for var in self.extension_vars.values():
+                var.set(True)
+        
+        def deselect_all_extensions():
+            for var in self.extension_vars.values():
+                var.set(False)
+        
+        ttk.Button(button_frame, text="Seleziona tutte", 
+                command=select_all_extensions).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Deseleziona tutte", 
+                command=deselect_all_extensions).pack(side=tk.LEFT, padx=5)
+        
+        # Aggiunta: Data e utente
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_info = f"Utente: {os.getlogin()}"
+        
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Label(info_frame, text=f"{user_info} | {current_time}", 
+                font=('Segoe UI', 8)).pack(side=tk.LEFT)
+        
+        # Pulsanti di azione
+        ttk.Button(button_frame, text="Annulla", 
+                command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Applica", 
+                command=lambda: self._apply_extension_selection(dialog)).pack(side=tk.RIGHT, padx=5)
+
+    def _apply_extension_selection(self, dialog):
+        """Applica la selezione delle estensioni."""
+        # Raccogli le estensioni selezionate
+        selected_exts = []
+        for ext, var in self.extension_vars.items():
+            if var.get():
+                selected_exts.append(ext)
+        
+        # Aggiungi le estensioni personalizzate
+        custom_exts_text = self.custom_exts_var.get()
+        if custom_exts_text:
+            custom_exts = [ext.strip() for ext in custom_exts_text.split(',')]
+            for ext in custom_exts:
+                if not ext:
+                    continue
+                ext = ext if ext.startswith('.') else f'.{ext}'
+                if ext not in selected_exts:
+                    selected_exts.append(ext)
+        
+        # Imposta il valore nel campo delle estensioni
+        self.extensions_var.set(", ".join(selected_exts))
+        
+        # Chiudi la finestra
+        dialog.destroy()
+
     def setup_event_handlers(self):
         """Configura i gestori degli eventi."""
         # Doppio click su un file per visualizzare l'anteprima
@@ -1839,7 +2035,7 @@ class PyQtGUI:
         path_layout.addWidget(QtWidgets.QLabel("Percorso:"))
         
         self.path_entry = QtWidgets.QLineEdit()
-        self.path_entry.setText(os.path.expanduser("~"))
+        self.path_entry.setText("")
         path_layout.addWidget(self.path_entry)
         
         browse_button = QtWidgets.QPushButton("Sfoglia...")
@@ -1860,11 +2056,19 @@ class PyQtGUI:
         # Opzioni di ricerca
         options_layout = QtWidgets.QHBoxLayout()
         
-        options_layout.addWidget(QtWidgets.QLabel("Estensioni:"))
-        
+        # Estensioni
+        ext_layout = QtWidgets.QHBoxLayout()
+        ext_layout.addWidget(QtWidgets.QLabel("Estensioni:"))
+
         self.extensions_entry = QtWidgets.QLineEdit()
         self.extensions_entry.setText(".txt, .pdf, .doc, .docx")
-        options_layout.addWidget(self.extensions_entry)
+        ext_layout.addWidget(self.extensions_entry)
+
+        ext_button = QtWidgets.QPushButton("Scegli estensioni...")
+        ext_button.clicked.connect(self.create_extension_selector_dialog)
+        ext_layout.addWidget(ext_button)
+
+        options_layout.addLayout(ext_layout)
         
         self.recursive_check = QtWidgets.QCheckBox("Ricerca ricorsiva")
         self.recursive_check.setChecked(True)
@@ -1950,6 +2154,53 @@ class PyQtGUI:
         
         self.main_layout.addLayout(status_layout)
     
+    def _select_all_extensions(self, category):
+        """Seleziona tutte le estensioni di una categoria."""
+        for key, checkbox in self.extension_checkboxes.items():
+            if key[0] == category:
+                checkbox.setChecked(True)
+
+    def _deselect_all_extensions(self, category):
+        """Deseleziona tutte le estensioni di una categoria."""
+        for key, checkbox in self.extension_checkboxes.items():
+            if key[0] == category:
+                checkbox.setChecked(False)
+
+    def _select_all_extensions_global(self):
+        """Seleziona tutte le estensioni."""
+        for checkbox in self.extension_checkboxes.values():
+            checkbox.setChecked(True)
+
+    def _deselect_all_extensions_global(self):
+        """Deseleziona tutte le estensioni."""
+        for checkbox in self.extension_checkboxes.values():
+            checkbox.setChecked(False)
+
+    def _apply_extension_selection(self, dialog):
+        """Applica la selezione delle estensioni."""
+        # Raccogli le estensioni selezionate
+        selected_exts = []
+        for ext, var in self.extension_vars.items():
+            if var.get():
+                selected_exts.append(ext)
+        
+        # Aggiungi le estensioni personalizzate
+        custom_exts_text = self.custom_exts_var.get()
+        if custom_exts_text:
+            custom_exts = [ext.strip() for ext in custom_exts_text.split(',')]
+            for ext in custom_exts:
+                if not ext:
+                    continue
+                ext = ext if ext.startswith('.') else f'.{ext}'
+                if ext not in selected_exts:
+                    selected_exts.append(ext)
+        
+        # Imposta il valore nel campo delle estensioni
+        self.extensions_var.set(", ".join(selected_exts))
+        
+        # Chiudi la finestra
+        dialog.destroy()
+
     def browse_path(self):
         """Apre un dialogo per selezionare il percorso di ricerca."""
         directory = QtWidgets.QFileDialog.getExistingDirectory(
